@@ -123,30 +123,33 @@ void Arena::render(Renderer& r, const Player& local, const std::vector<Player*>&
     Transform identity;
 
     // Stars ride along with the camera so they never get closer, which is what
-    // sells them as distant rather than as nearby specks.
+    // sells them as distant rather than as nearby specks. Radius 0 opts both
+    // the starfield and the arena shell out of culling: they are centred on the
+    // camera and larger than the frustum respectively, so a sphere test would
+    // always pass and only waste work.
     Transform starXform;
     starXform.position = local.transform().position;
-    r.drawFlat(starXform, starsMesh_, glm::vec3(0.75f, 0.8f, 1.0f), 0.85f, 2.0f);
+    r.drawFlat(starXform, starsMesh_, glm::vec3(0.75f, 0.8f, 1.0f), 0.85f, 2.0f, 0.0f);
 
-    r.drawFlat(identity, boundsMesh_, glm::vec3(0.15f, 0.55f, 0.75f), 0.55f);
+    r.drawFlat(identity, boundsMesh_, glm::vec3(0.15f, 0.55f, 0.75f), 0.55f, 2.0f, 0.0f);
 
     for (const Player* p : remotes) {
         if (!p->alive()) continue;
         Transform t = p->transform();
         t.scale = glm::vec3(1.0f);
-        r.drawLit(t, shipMesh_, p->color(), 0.12f);
+        r.drawLit(t, shipMesh_, p->color(), 0.12f, kShipBoundingRadius);
     }
 
     if (local.alive()) {
         // Third-person: the local ship is drawn too, camera sits behind it.
         Transform t = local.transform();
-        r.drawLit(t, shipMesh_, local.color(), 0.18f);
+        r.drawLit(t, shipMesh_, local.color(), 0.18f, kShipBoundingRadius);
     }
 
     for (const auto& b : bullets_) {
         Transform t;
         t.position = b.position;
-        r.drawLit(t, bulletMesh_, b.color, 0.9f);
+        r.drawLit(t, bulletMesh_, b.color, 0.9f, kBulletBoundingRadius);
     }
 
     particles_.render(r);

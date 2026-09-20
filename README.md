@@ -117,6 +117,53 @@ Module.ccall('arena_test_step', null, ['number','number'], [1/60, 120]);
 Module.ccall('arena_test_speed', 'number', [], []);
 ```
 
+## Performance
+
+Frustum culling, measured rather than assumed. `tests/bench_render.cpp` renders
+the same scene twice -- culling off, then on -- with the window hidden, vsync
+disabled, and `glFinish()` before each sample so the timer measures rendering
+instead of command submission. The camera rotates during the run, because a
+fixed camera lets one lucky orientation stand in for the average.
+
+```bash
+cmake --build build --target bench_render && ./build/bench_render 2000
+```
+
+On an Apple M3 Pro, objects spread uniformly through a 180-unit arena:
+
+| Objects | Culling off | Culling on | Speedup | Culled |
+|--------:|------------:|-----------:|--------:|-------:|
+| 100     | 0.70 ms     | 0.62 ms    | 1.13x   | ~88%   |
+| 500     | 1.69 ms     | 0.66 ms    | 2.56x   | ~88%   |
+| 1000    | 3.12 ms     | 0.88 ms    | 3.54x   | ~88%   |
+| 2000    | 5.36 ms     | 1.30 ms    | 4.13x   | 87.7%  |
+| 5000    | 10.25 ms    | 2.57 ms    | 3.98x   | ~88%   |
+
+The honest reading: at the game's current scale -- a handful of ships and a few
+hundred bullets -- culling buys very little, because roughly 88% of the scene is
+off-screen but the whole scene is cheap to begin with. It becomes worth having
+past roughly 500 objects, and by 5000 it is the difference between a 10ms frame
+and a 2.6ms one. It was worth building now because the cost is bounded (six
+plane extractions per frame, one dot product per object) and retrofitting a
+culling pass after a renderer has grown is considerably harder.
+
+Percentiles rather than averages, because averages hide the frames people
+actually notice: a single 40ms hitch inside a second of 2ms frames still
+averages ~2.6ms while feeling like a stutter.
+
+The same counters are live in-game. The HUD reports frame rate, p95 frame time,
+draw calls and culled objects each second, and the web build can toggle culling
+at runtime to compare:
+
+```js
+Module.ccall('arena_test_set_culling', null, ['number'], [0]);   // off
+Module.ccall('arena_test_draw_calls', 'number', [], []);
+Module.ccall('arena_test_culled', 'number', [], []);
+```
+
+Verified in the browser: with six bullets behind the camera, culling on draws 3
+objects and culls 6; culling off draws 9 and culls 0.
+
 ## Decisions worth knowing about
 
 **20 Hz network tick, not 60.** The original plan sent a full state update
@@ -163,5 +210,7 @@ game layer changes when it is added.
 **Particles share one colour per frame.** The pool draws in a single call with
 an averaged tint. Per-particle colour needs a second vertex attribute.
 
-**No LOD or frustum culling yet.** At current arena sizes and ship counts the
-GPU is not the constraint.
+**No LOD, and culling is per-object sphere tests only.** There is no spatial
+partition: every object is tested every frame, which is linear and fine at these
+counts but would want a BVH or octree at an order of magnitude more. Level of
+detail is not implemented -- every ship draws its full mesh at any distance.

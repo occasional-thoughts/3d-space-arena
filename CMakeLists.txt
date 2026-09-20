@@ -28,6 +28,11 @@ if(NOT EMSCRIPTEN)
     if(glm_FOUND)
         target_link_libraries(test_math PRIVATE glm::glm)
     endif()
+
+    # Needs a real GL context, so it links the same deps as the client.
+    add_executable(bench_render EXCLUDE_FROM_ALL
+        tests/bench_render.cpp src/engine/renderer.cpp src/engine/mesh.cpp)
+    target_include_directories(bench_render PRIVATE include)
 endif()
 
 if(EMSCRIPTEN)
@@ -66,4 +71,7 @@ else()
     find_package(glm CONFIG REQUIRED)
     find_library(OPENGL_FRAMEWORK OpenGL REQUIRED)
     target_link_libraries(game_client PRIVATE glfw glm::glm ${OPENGL_FRAMEWORK})
+    if(TARGET bench_render)
+        target_link_libraries(bench_render PRIVATE glfw glm::glm ${OPENGL_FRAMEWORK})
+    endif()
 endif()

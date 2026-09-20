@@ -20,6 +20,11 @@ public:
     static constexpr float kBulletSpeed  = 120.0f;
     static constexpr float kBulletDamage = 18.0f;
     static constexpr int   kWinScore     = 10;
+    // Bounding spheres for culling. The ship mesh reaches ~1.6 units from its
+    // origin at the nose, so 1.8 leaves margin rather than clipping a wingtip
+    // at the screen edge.
+    static constexpr float kShipBoundingRadius   = 1.8f;
+    static constexpr float kBulletBoundingRadius = 0.3f;
 
     void init();
     void shutdown();

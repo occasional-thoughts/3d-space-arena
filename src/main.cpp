@@ -210,6 +210,7 @@ void frame() {
     glm::mat4 proj = glm::perspective(glm::radians(70.0f),
                                       (float)fbw / (float)fbh, 0.1f, 2000.0f);
 
+    g_app.renderer.profiler().addSample(dt * 1000.0f);
     g_app.renderer.beginFrame(fbw, fbh);
     g_app.renderer.setCamera(view, proj, eye);
     g_app.arena.render(g_app.renderer, g_app.local, g_app.remoteList);
@@ -220,12 +221,14 @@ void frame() {
     if (g_app.hudTimer > 1.0f) {
         g_app.hudTimer = 0.0f;
         glm::vec3 v = g_app.local.body().velocity;
-        glm::vec3 p = g_app.local.transform().position;
-        printf("[hud] hp=%.0f score=%d peers=%zu %s | pos %.0f,%.0f,%.0f vel %.1f\n",
+        const Profiler::FrameStats fs = g_app.renderer.profiler().stats();
+        const Profiler::Counters& pc = g_app.renderer.profiler().counters();
+        printf("[hud] hp=%.0f score=%d peers=%zu %s | vel %.0f | %.1f fps "
+               "(p95 %.1f ms) | draws %d culled %d\n",
                g_app.local.health(), g_app.local.score(),
                g_app.remoteViews.size(),
                g_app.net.isConnected() ? "online" : "offline",
-               p.x, p.y, p.z, glm::length(v));
+               glm::length(v), fs.fps, fs.p95Ms, pc.drawCalls, pc.culled);
         fflush(stdout);
     }
 }
@@ -276,6 +279,15 @@ EMSCRIPTEN_KEEPALIVE float arena_test_speed() {
 }
 EMSCRIPTEN_KEEPALIVE float arena_test_health() { return g_app.local.health(); }
 EMSCRIPTEN_KEEPALIVE int arena_test_peers() { return (int)g_app.remoteViews.size(); }
+EMSCRIPTEN_KEEPALIVE void arena_test_set_culling(int on) {
+    g_app.renderer.setCullingEnabled(on != 0);
+}
+EMSCRIPTEN_KEEPALIVE int arena_test_draw_calls() {
+    return g_app.renderer.profiler().counters().drawCalls;
+}
+EMSCRIPTEN_KEEPALIVE int arena_test_culled() {
+    return g_app.renderer.profiler().counters().culled;
+}
 // Drains the socket without needing a rendered frame.
 EMSCRIPTEN_KEEPALIVE void arena_test_poll() { g_app.net.poll(); }
 EMSCRIPTEN_KEEPALIVE float arena_test_peer_pos(int axis) {

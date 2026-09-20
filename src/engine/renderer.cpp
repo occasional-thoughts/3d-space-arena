@@ -88,6 +88,7 @@ void Renderer::shutdown() {
 }
 
 void Renderer::beginFrame(int fbWidth, int fbHeight) {
+    profiler_.beginFrame();
     glViewport(0, 0, fbWidth, fbHeight);
     glClearColor(0.02f, 0.02f, 0.05f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -95,9 +96,21 @@ void Renderer::beginFrame(int fbWidth, int fbHeight) {
 
 void Renderer::setCamera(const glm::mat4& v, const glm::mat4& p, glm::vec3 eye) {
     view = v; proj = p; eyePos = eye;
+    frustum_.extract(p * v);
 }
 
-void Renderer::drawLit(const Transform& t, const Mesh& mesh, glm::vec3 color, float emissive) {
+bool Renderer::testVisible(const glm::vec3& center, float radius) {
+    if (!cullingEnabled_ || radius <= 0.0f) return true;
+    profiler_.noteConsidered();
+    if (frustum_.containsSphere(center, radius)) return true;
+    profiler_.noteCulled();
+    return false;
+}
+
+void Renderer::drawLit(const Transform& t, const Mesh& mesh, glm::vec3 color,
+                       float emissive, float boundingRadius) {
+    if (!testVisible(t.position, boundingRadius)) return;
+    profiler_.noteDraw();
     glUseProgram(litProgram);
     glm::mat4 model = t.getMatrix();
     glUniformMatrix4fv(litLoc.model, 1, GL_FALSE, glm::value_ptr(model));
@@ -110,7 +123,9 @@ void Renderer::drawLit(const Transform& t, const Mesh& mesh, glm::vec3 color, fl
 }
 
 void Renderer::drawFlat(const Transform& t, const Mesh& mesh, glm::vec3 color,
-                        float alpha, float pointSize) {
+                        float alpha, float pointSize, float boundingRadius) {
+    if (!testVisible(t.position, boundingRadius)) return;
+    profiler_.noteDraw();
     glUseProgram(flatProgram);
     glm::mat4 model = t.getMatrix();
     glUniformMatrix4fv(flatLoc.model, 1, GL_FALSE, glm::value_ptr(model));
@@ -125,6 +140,7 @@ void Renderer::drawFlat(const Transform& t, const Mesh& mesh, glm::vec3 color,
 void Renderer::drawFlatRaw(const Transform& t, GLuint vaoId, GLsizei count, GLenum mode,
                            glm::vec3 color, float alpha, float pointSize) {
     if (!count) return;
+    profiler_.noteDraw();
     glUseProgram(flatProgram);
     glm::mat4 model = t.getMatrix();
     glUniformMatrix4fv(flatLoc.model, 1, GL_FALSE, glm::value_ptr(model));
