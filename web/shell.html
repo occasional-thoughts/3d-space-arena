@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Space Arena</title>
+<style>
+  :root { color-scheme: dark; --cyan: #6fe7ff; --line: #2c3d63; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #05060c; color: #cfe3ff;
+    font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; }
+  #wrap { position: relative; width: 100vw; height: 100vh; }
+  canvas { display: block; width: 100%; height: 100%; background: #05060c; outline: none; }
+
+  #hud { position: absolute; left: 16px; bottom: 16px; pointer-events: none;
+    text-shadow: 0 1px 3px #000; opacity: .9; letter-spacing: .04em; }
+  #status { position: absolute; top: 14px; right: 16px; opacity: .6; font-size: 12px; }
+
+  .overlay { position: absolute; inset: 0; display: grid; place-content: center;
+    text-align: center; background: rgba(5,6,12,.92); gap: 14px; padding: 24px; }
+  h1 { margin: 0; font-size: 26px; letter-spacing: .16em; color: var(--cyan);
+    text-transform: uppercase; font-weight: 600; }
+  p { margin: 0; opacity: .75; max-width: 48ch; }
+  form { display: grid; gap: 8px; justify-items: center; }
+  input { background: #0c1220; border: 1px solid var(--line); color: #dff1ff;
+    padding: 9px 12px; border-radius: 6px; width: 240px; font: inherit; }
+  input:focus { outline: 1px solid var(--cyan); }
+  .row { display: flex; gap: 8px; }
+  button { background: #12243c; border: 1px solid var(--line); color: var(--cyan);
+    padding: 9px 18px; border-radius: 6px; cursor: pointer; font: inherit; }
+  button:hover:not(:disabled) { background: #18314f; }
+  button:disabled { opacity: .5; cursor: default; }
+  kbd { background: #16203a; border: 1px solid var(--line); border-radius: 4px;
+    padding: 1px 6px; font-size: 12px; }
+  #err { color: #ff8095; min-height: 1.2em; font-size: 13px; }
+  .hidden { display: none !important; }
+  .keys { opacity: .6; font-size: 12.5px; line-height: 2; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+  <div id="hud"></div>
+  <div id="status"></div>
+
+  <div class="overlay" id="login">
+    <h1>Space Arena</h1>
+    <p>Pick a callsign. New name registers, existing name signs in.</p>
+    <form id="authForm" autocomplete="off">
+      <input id="username" placeholder="callsign" minlength="3" maxlength="32" required>
+      <input id="password" type="password" placeholder="password (8+ chars)"
+             minlength="8" maxlength="128" required>
+      <div class="row">
+        <button type="submit" id="playBtn">Enter arena</button>
+        <button type="button" id="soloBtn">Fly solo</button>
+      </div>
+    </form>
+    <div id="err"></div>
+    <div class="keys">
+      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> thrust &middot; mouse aims &middot;
+      <kbd>Q</kbd><kbd>E</kbd> roll &middot; <kbd>Shift</kbd> boost<br>
+      <kbd>Space</kbd>/<kbd>C</kbd> climb &amp; dive &middot; click fires &middot;
+      <kbd>Esc</kbd> frees the cursor
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="launch">
+    <h1 id="launchTitle">Ready</h1>
+    <p id="launchBody">Click to lock the cursor and launch.</p>
+  </div>
+</div>
+
+<script>
+  // Same host by default, so a deployment behind one domain needs no edits.
+  // Override by serving with ?api=https://api.example.com for split origins.
+  const params = new URLSearchParams(location.search);
+  const API = params.get('api') || location.origin.replace(/\/$/, '');
+
+  const el = (id) => document.getElementById(id);
+  const canvas = el('canvas'), errBox = el('err'), statusBox = el('status');
+  let started = false;
+
+  var Module = {
+    canvas,
+    noInitialRun: true,
+    print: (text) => {
+      // The C++ side prints one [hud] line per second. Mirroring it into the
+      // DOM is cheaper than putting a text renderer in the GL pipeline.
+      if (text.startsWith('[hud]')) el('hud').textContent = text.slice(6);
+      else console.log(text);
+      if (text.startsWith('[net] connected')) statusBox.textContent = 'online';
+    },
+    printErr: (text) => console.warn(text),
+    onRuntimeInitialized: () => { statusBox.textContent = 'engine ready'; },
+  };
+
+  function fit() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.floor(canvas.clientWidth * dpr);
+    canvas.height = Math.floor(canvas.clientHeight * dpr);
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  function launch(wsUrl, title, body, callsign) {
+    if (started) return;
+    started = true;
+    el('login').classList.add('hidden');
+    const panel = el('launch');
+    el('launchTitle').textContent = title;
+    el('launchBody').textContent = body;
+    panel.classList.remove('hidden');
+
+    // Pointer lock is only granted inside a user gesture, so the engine does
+    // not start until this click.
+    panel.addEventListener('click', () => {
+      panel.classList.add('hidden');
+      canvas.focus();
+      // The callsign goes with it: the backend credits kills by username.
+      Module.callMain([wsUrl, callsign || '']);
+    }, { once: true });
+  }
+
+  async function post(path, body, token) {
+    const res = await fetch(API + path, {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' },
+                             token ? { Authorization: 'Bearer ' + token } : {}),
+      body: JSON.stringify(body || {}),
+    });
+    const text = await res.text();
+    let json = {};
+    try { json = text ? JSON.parse(text) : {}; } catch { /* non-JSON error body */ }
+    return { ok: res.ok, status: res.status, json };
+  }
+
+  el('authForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = el('playBtn');
+    btn.disabled = true;
+    errBox.textContent = '';
+    statusBox.textContent = 'signing in…';
+
+    const username = el('username').value.trim();
+    const password = el('password').value;
+
+    try {
+      // Try login first; a 401 here means either a new callsign or a wrong
+      // password, so registering is the next thing to attempt.
+      let auth = await post('/auth/login', { username, password });
+      if (!auth.ok) {
+        const reg = await post('/auth/register', { username, password });
+        if (!reg.ok) {
+          errBox.textContent = reg.status === 409
+            ? 'That callsign is taken — wrong password?'
+            : (reg.json.error || 'Could not sign in.');
+          btn.disabled = false;
+          statusBox.textContent = '';
+          return;
+        }
+        auth = reg;
+      }
+
+      statusBox.textContent = 'finding an arena…';
+      const queue = await post('/matchmaking/join', {}, auth.json.token);
+      if (!queue.ok) {
+        errBox.textContent = queue.json.error || 'Matchmaking unavailable.';
+        btn.disabled = false;
+        return;
+      }
+
+      // The server reports its own public URL; rewrite to wss:// when the page
+      // is https, because browsers refuse mixed-content sockets.
+      let ws = queue.json.websocketUrl;
+      if (location.protocol === 'https:') ws = ws.replace(/^ws:\/\//, 'wss://');
+
+      launch(ws, 'Arena ' + queue.json.arenaId.replace('arena-', ''),
+             queue.json.playersWaiting > 1
+               ? queue.json.playersWaiting + ' pilots in this arena. Click to launch.'
+               : 'You are first in. Click to launch — others drop in live.',
+             auth.json.username || username);
+    } catch (netErr) {
+      errBox.textContent = 'Backend unreachable at ' + API;
+      btn.disabled = false;
+      statusBox.textContent = '';
+    }
+  });
+
+  // Offline sandbox: the engine handles a dead socket fine, so this is just a
+  // launch with a URL nothing is listening on.
+  el('soloBtn').addEventListener('click', () => {
+    launch('ws://localhost:9/offline', 'Solo flight',
+           'No server — free flight and target practice. Click to launch.');
+  });
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

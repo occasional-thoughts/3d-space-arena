@@ -1,0 +1,44 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: arena
+      MYSQL_USER: arena
+      MYSQL_PASSWORD: arena
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      # The backend crashes on boot if it connects before MySQL finishes its
+      # first-run initialisation, so compose waits on this instead of the port.
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build: ./backend
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      MYSQL_USER: arena
+      MYSQL_PASSWORD: arena
+      PUBLIC_WS_URL: ${PUBLIC_WS_URL:-ws://localhost:8080/game}
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  web:
+    image: nginx:alpine
+    volumes:
+      - ./build-web:/usr/share/nginx/html:ro
+    ports:
+      - "8000:80"
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:

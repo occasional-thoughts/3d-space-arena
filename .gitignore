@@ -1,0 +1,7 @@
+build/
+build-web/
+.DS_Store
+*.o
+*.wasm
+*.js.map
+backend/target/

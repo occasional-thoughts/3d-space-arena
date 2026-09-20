@@ -1,0 +1,36 @@
+# Terminates TLS and puts the game and its socket on one origin.
+#
+# This matters more than it looks: the page is served over https, and browsers
+# refuse to open a plain ws:// socket from an https page. Caddy fetches the
+# certificate automatically and upgrades /game to wss:// for free.
+#
+#   caddy run --config Caddyfile
+# Replace the domain below with your own before deploying.
+
+arena.example.com {
+    encode gzip zstd
+
+    # Sockets and API first: more specific routes win.
+    handle /game* {
+        reverse_proxy backend:8080
+    }
+    handle /auth/* {
+        reverse_proxy backend:8080
+    }
+    handle /matchmaking/* {
+        reverse_proxy backend:8080
+    }
+    handle /leaderboard* {
+        reverse_proxy backend:8080
+    }
+
+    # Everything else is the WASM client.
+    handle {
+        root * /srv/web
+        # .wasm must be served with this type or the browser refuses to stream
+        # it, and falls back to a slower path at best.
+        @wasm path *.wasm
+        header @wasm Content-Type application/wasm
+        file_server
+    }
+}
